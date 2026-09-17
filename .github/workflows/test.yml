@@ -1,0 +1,84 @@
+name: CI Pipeline
+
+on:
+  - push
+  - pull_request
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [stable, oldstable]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.runtime }}
+          cache: true
+
+      - name: Install dependencies
+        if: hashFiles('go.mod') != ''
+        run: go mod download
+        shell: bash
+
+      - name: Check formatting and lint
+        if: hashFiles('go.mod') != ''
+        run: |
+          set -euo pipefail
+          gofmt -d .
+          go vet ./...
+        shell: bash
+
+      - name: Build package
+        if: hashFiles('go.mod') != ''
+        run: go build ./...
+        shell: bash
+
+      - name: Run unit and integration tests
+        if: hashFiles('go.mod') != ''
+        run: go test ./...
+        shell: bash
+
+      - name: Record pipeline summary
+        if: always()
+        shell: bash
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          SETUP_GO_OUTCOME: ${{ steps.setup-go.outcome }}
+          DEPS_OUTCOME: ${{ steps.dependencies.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          SUMMARY_OUTCOME: ${{ steps.summary.outcome }}
+        run: |
+          set -euo pipefail
+          status() {
+            case "$1" in
+              success) printf '✅' ;;
+              failure) printf '❌' ;;
+              skipped) printf '⊘' ;;
+              cancelled) printf '⊘' ;;
+              *) printf '⚠️' ;;
+            esac
+          }
+          printf '%s\n' '# CI Pipeline Summary' '' '| Step | Outcome |' '| --- | --- |' >> "$GITHUB_STEP_SUMMARY"
+          printf '| Checkout | %s |\n' "$(status "$CHECKOUT_OUTCOME")" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Go setup | %s |\n' "$(status "$SETUP_GO_OUTCOME")" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Dependencies | %s |\n' "$(status "$DEPS_OUTCOME")" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Lint | %s |\n' "$(status "$LINT_OUTCOME")" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Build | %s |\n' "$(status "$BUILD_OUTCOME")" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Tests | %s |\n' "$(status "$TEST_OUTCOME")" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Summary | %s |\n' "$(status "$SUMMARY_OUTCOME")" >> "$GITHUB_STEP_SUMMARY"
